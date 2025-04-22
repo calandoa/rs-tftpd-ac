@@ -11,7 +11,7 @@ use std::time::Duration;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_BLOCK_SIZE: usize = 512;
 pub const DEFAULT_WINDOW_SIZE: u16 = 1;
-pub const DEFAULT_WINDOW_WAIT: Duration = Duration::from_millis(1);
+pub const DEFAULT_WINDOW_WAIT: Duration = Duration::from_millis(0);
 pub const DEFAULT_MAX_RETRIES: usize = 6;
 
 /// Server `struct` is used for handling incoming TFTP requests.
@@ -170,8 +170,7 @@ impl Server {
                 if self.single_port {
                     let single_socket = create_single_socket(&self.socket, to, worker_options.timeout)?;
                     self.clients.insert(*to, single_socket.sender());
-                    self.largest_block_size =
-                        max(self.largest_block_size, worker_options.block_size);
+                    self.largest_block_size = max(self.largest_block_size, worker_options.block_size);
 
                     socket = Box::new(single_socket);
                 } else {
@@ -194,7 +193,7 @@ impl Server {
                     worker_options.block_size,
                     worker_options.timeout,
                     worker_options.window_size,
-                    DEFAULT_WINDOW_WAIT,
+                    worker_options.window_wait,
                     self.duplicate_packets + 1,
                     self.max_retries,
                 );
@@ -239,7 +238,7 @@ impl Server {
                 worker_options.block_size,
                 worker_options.timeout,
                 worker_options.window_size,
-                DEFAULT_WINDOW_WAIT,
+                worker_options.window_wait,
                 self.duplicate_packets + 1,
                 self.max_retries,
             );
@@ -295,6 +294,7 @@ struct WorkerOptions {
     transfer_size: usize,
     timeout: Duration,
     window_size: u16,
+    window_wait: Duration,
 }
 
 #[derive(Debug, PartialEq)]
@@ -325,6 +325,7 @@ fn parse_options(
         transfer_size: 0,
         timeout: DEFAULT_TIMEOUT,
         window_size: DEFAULT_WINDOW_SIZE,
+        window_wait: DEFAULT_WINDOW_WAIT,
     };
 
     for option in options {
@@ -351,11 +352,14 @@ fn parse_options(
             OptionType::TimeoutMs => {
                 worker_options.timeout = Duration::from_millis(*value as u64);
             }
-            OptionType::Windowsize => {
+            OptionType::WindowSize => {
                 if *value == 0 || *value > u16::MAX as usize {
                     return Err("Invalid windowsize value");
                 }
                 worker_options.window_size = *value as u16;
+            }
+            OptionType::WindowWait => {
+                worker_options.window_wait = Duration::from_millis(*value as u64);
             }
         }
     }
@@ -533,6 +537,7 @@ mod tests {
                 transfer_size: 0,
                 timeout: DEFAULT_TIMEOUT,
                 window_size: DEFAULT_WINDOW_SIZE,
+                window_wait: DEFAULT_WINDOW_WAIT,
             }
         );
     }

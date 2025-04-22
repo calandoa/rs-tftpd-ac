@@ -2,6 +2,7 @@ use crate::{ErrorCode, Packet, Socket, Window};
 use std::thread::JoinHandle;
 use std::{
     error::Error,
+    io::ErrorKind,
     fs::{self, File},
     path::PathBuf,
     thread,
@@ -47,7 +48,7 @@ pub struct Worker<T: Socket + ?Sized> {
     clean_on_error: bool,
     blk_size: usize,
     timeout: Duration,
-    windowsize: u16,
+    window_size: u16,
     window_wait: Duration,
     repeat_amount: u8,
     max_retries: usize,
@@ -61,19 +62,18 @@ impl<T: Socket + ?Sized> Worker<T> {
         clean_on_error: bool,
         blk_size: usize,
         timeout: Duration,
-        windowsize: u16,
+        window_size: u16,
         window_wait: Duration,
         repeat_amount: u8,
         max_retries : usize,
     ) -> Worker<T> {
-        println!("- New worker blk:{blk_size} rpt:{repeat_amount}  ws:{windowsize}  ww:{window_wait:?}  to:{timeout:?}  rty:{max_retries}");
         Worker {
             socket,
             file_path,
             clean_on_error,
             blk_size,
             timeout,
-            windowsize,
+            window_size,
             window_wait,
             repeat_amount,
             max_retries,
@@ -156,7 +156,7 @@ impl<T: Socket + ?Sized> Worker<T> {
         let mut block_seq_win : u16 = 1;
         let mut win_idx : u16 = 0;
         let mut more = true;
-        let mut window = Window::new(self.windowsize, self.blk_size, file);
+        let mut window = Window::new(self.window_size, self.blk_size, file);
 
         let mut timeout_end = Instant::now();
         let mut retry_cnt = 0;
@@ -168,7 +168,6 @@ impl<T: Socket + ?Sized> Worker<T> {
         }
 
         loop {
-
             if window.is_empty() {
                 if !more {
                     return Ok(());
@@ -187,8 +186,9 @@ impl<T: Socket + ?Sized> Worker<T> {
                 win_idx += 1;
 
                 if win_idx < window.len() {
-                    thread::sleep(self.window_wait);
-                    //println!("    - wait");
+                    if !self.window_wait.is_zero() {
+                        thread::sleep(self.window_wait);
+                    }
                 } else {
                     self.socket.set_nonblocking(false)?;
                     timeout_end = Instant::now() + self.timeout;
@@ -201,12 +201,11 @@ impl<T: Socket + ?Sized> Worker<T> {
 
                         let next_seq = block_seq_rx.wrapping_add(1);
                         let diff = next_seq.wrapping_sub(block_seq_win);
-                        if diff <= self.windowsize {
-                            //println!("     - rx <{block_seq_rx}> [{block_seq_win}] // {diff} {win_idx}");
+                        if diff <= self.window_size {
                             block_seq_win = next_seq;
                             window.remove(diff)?;
                             win_idx = 0;
-                            if diff != self.windowsize && more {
+                            if diff != self.window_size && more {
                                 more = window.fill()?;
                                 self.socket.set_nonblocking(true)?;
                             }
@@ -223,13 +222,17 @@ impl<T: Socket + ?Sized> Worker<T> {
                     Err(e) => {
                         if let Some(io_e) = e.downcast_ref::<std::io::Error>() {
                             match io_e.kind() {
-                                std::io::ErrorKind::TimedOut => {
-                                    println!("     === TO {win_idx}");
+                                /* On blocking sockets, Unix returns WouldBlock and Windows TimedOut */
+                                ErrorKind::WouldBlock |
+                                ErrorKind::TimedOut => if win_idx < window.len() {
+                                    // Non blocking socket
+                                    break;
+                                } else {
+                                    // Blocking socket, so timeout expired
                                     self.socket.set_nonblocking(true)?;
                                     win_idx = 0;
                                 },
-                                std::io::ErrorKind::WouldBlock => break,
-                                std::io::ErrorKind::ConnectionReset => println!("Cnx reset during reception {io_e:?}"),
+                                ErrorKind::ConnectionReset => println!("Cnx reset during reception {io_e:?}"),
                                 _ => println!("IO error during reception {io_e:?}"),
                             }
                         } else {
@@ -252,7 +255,7 @@ impl<T: Socket + ?Sized> Worker<T> {
 
     fn receive_file(self, file: File, transfer_size: usize) -> Result<(), Box<dyn Error>> {
         let mut block_number: u16 = 0;
-        let mut window = Window::new(self.windowsize, self.blk_size, file);
+        let mut window = Window::new(self.window_size, self.blk_size, file);
 
         loop {
             let mut last = false;
@@ -265,7 +268,6 @@ impl<T: Socket + ?Sized> Worker<T> {
                         data,
                     }) => {
                         if received_block_number == block_number.wrapping_add(1) {
-                            //println!(" - rx {} <{received_block_number}> : {data:?}", window.len());
                             block_number = received_block_number;
                             last = data.len() < self.blk_size; // bool
                             window.add(data)?;
@@ -274,7 +276,6 @@ impl<T: Socket + ?Sized> Worker<T> {
                                 break;
                             }
                         } else {
-                            println!(" - rx bad {} <{received_block_number}> [{}]", window.len(), block_number.wrapping_add(1));
                             // Block number mismatch, send ack of last good block
                             break;
                         }
@@ -283,7 +284,6 @@ impl<T: Socket + ?Sized> Worker<T> {
                         return Err(format!("Received error code {code}: {msg}").into());
                     }
                     _ => {
-                        println!("   - err r:{retry_cnt}");
                         retry_cnt += 1;
                         if retry_cnt == self.max_retries {
                             return Err(
