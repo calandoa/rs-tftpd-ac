@@ -47,6 +47,9 @@ pub trait Socket: Send + Sync + 'static {
     fn set_read_timeout(&mut self, dur: Duration) -> Result<(), Box<dyn Error>>;
     /// Sets the write timeout for the [`Socket`].
     fn set_write_timeout(&mut self, dur: Duration) -> Result<(), Box<dyn Error>>;
+    
+    /// Sets the [`Socket`] as blocking or not.
+    fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), Box<dyn Error>>;
 }
 
 impl Socket for UdpSocket {
@@ -93,6 +96,12 @@ impl Socket for UdpSocket {
 
         Ok(())
     }
+    
+    fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), Box<dyn Error>> {
+        UdpSocket::set_nonblocking(self, nonblocking)?;
+
+        Ok(())
+    }
 }
 
 /// ServerSocket `struct` is used as an abstraction layer for a server
@@ -105,10 +114,12 @@ impl Socket for UdpSocket {
 /// use std::net::{SocketAddr, UdpSocket};
 /// use std::str::FromStr;
 /// use tftpd::{Socket, ServerSocket, Packet};
+/// use std::time::Duration;
 ///
 /// let socket = ServerSocket::new(
 ///     UdpSocket::bind("127.0.0.1:0").unwrap(),
 ///     SocketAddr::from_str("127.0.0.1:50000").unwrap(),
+///     Duration::from_secs(3)
 /// );
 /// socket.send(&Packet::Ack(1)).unwrap();
 /// ```
@@ -162,6 +173,12 @@ impl Socket for ServerSocket {
 
         Ok(())
     }
+
+    fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), Box<dyn Error>> {
+        self.socket.set_nonblocking(nonblocking)?;
+
+        Ok(())
+    }
 }
 
 impl ServerSocket {
@@ -211,6 +228,10 @@ impl<T: Socket + ?Sized> Socket for Box<T> {
     fn set_write_timeout(&mut self, dur: Duration) -> Result<(), Box<dyn Error>> {
         (**self).set_write_timeout(dur)
     }
+
+    fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), Box<dyn Error>> {
+        (**self).set_nonblocking(nonblocking)
+    }
 }
 
 #[cfg(test)]
@@ -224,6 +245,7 @@ mod tests {
         let socket = ServerSocket::new(
             UdpSocket::bind("127.0.0.1:0").unwrap(),
             SocketAddr::from_str("127.0.0.1:50000").unwrap(),
+            Duration::from_secs(3)
         );
 
         socket.sender.lock().unwrap().send(Packet::Ack(1)).unwrap();

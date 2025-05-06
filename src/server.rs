@@ -404,7 +404,6 @@ fn check_file_exists(file: &Path, directory: &PathBuf) -> ErrorCode {
     }
 
     if !file.exists() {
-        eprintln!("Cannot find {} in {}", file.display(), directory.display());
         return ErrorCode::FileNotFound;
     }
 
