@@ -8,6 +8,9 @@ use crate::server::{
     DEFAULT_MAX_RETRIES,
     DEFAULT_ROLLOVER};
 
+#[cfg(feature = "debug_drop")]
+use crate::debug;
+
 /// Configuration `struct` used for parsing TFTP options from user
 /// input.
 ///
@@ -191,6 +194,9 @@ impl Config {
                         return Err("Rollover policy value missing: use n, 0, 1, x".into())
                     }
                 }
+                #[cfg(feature = "debug_drop")]
+                "-D" => debug::drop_set(args.next())?,
+
                 invalid => return Err(format!("Invalid flag: {invalid}").into()),
             }
         }

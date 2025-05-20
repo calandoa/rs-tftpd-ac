@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
 
+#[cfg(feature = "debug_drop")]
+use crate::debug;
+
 /// Configuration `struct` used for parsing TFTP Client options from user
 /// input.
 ///
@@ -198,6 +201,9 @@ impl ClientConfig {
                     println!("  -h, --help\t\t\t\tprint help information");
                     process::exit(0);
                 }
+                #[cfg(feature = "debug_drop")]
+                "-D" => debug::drop_set(args.next())?,
+
                 "--" => {
                     while let Some(arg) = args.next() {
                         if !config.file_path.as_os_str().is_empty() {

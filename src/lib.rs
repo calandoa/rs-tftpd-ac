@@ -28,6 +28,9 @@ mod socket;
 mod window;
 mod worker;
 
+#[cfg(feature = "debug_drop")]
+mod debug;
+
 #[cfg(feature = "client")]
 pub use client::Client;
 #[cfg(feature = "client")]

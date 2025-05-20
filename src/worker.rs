@@ -10,6 +10,9 @@ use std::{
 };
 use crate::server::Rollover;
 
+#[cfg(feature = "debug_drop")]
+use crate::debug;
+
 const DEFAULT_DUPLICATE_DELAY: Duration = Duration::from_millis(1);
 
 /// Worker `struct` is used for multithreaded file sending and receiving.
@@ -361,6 +364,9 @@ impl<T: Socket + ?Sized> Worker<T> {
     }
 
     fn send_packet(&self, packet: &Packet) -> Result<(), Box<dyn Error>> {
+        #[cfg(feature = "debug_drop")]
+        if debug::drop_check(packet) { return Ok(()) };
+
         for i in 0..self.repeat_amount {
             if i > 0 {
                 std::thread::sleep(DEFAULT_DUPLICATE_DELAY);
