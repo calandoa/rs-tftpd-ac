@@ -153,7 +153,9 @@ impl<T: Socket + ?Sized> Worker<T> {
             self.opt_common.block_size,
             file,
         );
+        let n = Instant::now();
         let mut more = window.fill()?;
+        let mut read_time = Instant::now() - n;
 
         let mut timeout_end = Instant::now() + self.opt_common.timeout;
         let mut retry_cnt = 0;
@@ -235,9 +237,12 @@ impl<T: Socket + ?Sized> Worker<T> {
                                             block_seq_win = ack;
                                             window.remove(diff)?;
                                             if !more && window.is_empty() {
+                                                log_dbg!("  IO read time {:?}", read_time);
                                                 return Ok(());
                                             }
+                                            let n = Instant::now();
                                             more = more && window.fill()?;
+                                            read_time += Instant::now() - n;
                                             win_idx = 0;
                                             break;
                                         } else {
@@ -297,6 +302,7 @@ impl<T: Socket + ?Sized> Worker<T> {
             file,
         );
         let mut retry_cnt = 0;
+        let mut write_time = Duration::default();
 
         let mut last = false;
         let mut listen_all = false;
@@ -392,10 +398,15 @@ impl<T: Socket + ?Sized> Worker<T> {
                 }
             }
 
-            window.empty()?;
             self.send_packet(&Packet::Ack(block_number))?;
             send_ack = false;
+
+            let n = Instant::now();
+            window.empty()?;
+            write_time = Instant::now() - n;
         }
+
+        log_dbg!("  IO write time {:?}", write_time);
 
         // we should wait and listen a bit more as per RFC 1350 section 6
 
