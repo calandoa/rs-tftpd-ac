@@ -9,7 +9,7 @@ use std::{
 
 use crate::log::*;
 use crate::options::{OptionsPrivate, OptionsProtocol, Rollover};
-use crate::{ErrorCode, Packet, Socket, Window};
+use crate::{ErrorCode, Packet, Socket, WindowRead, WindowWrite};
 
 #[cfg(feature = "debug_drop")]
 use crate::drop::drop_check;
@@ -148,12 +148,14 @@ impl<T: Socket + ?Sized> Worker<T> {
     fn send_file(mut self, file: File, check_response: bool) -> Result<(), Box<dyn Error>> {
         let mut block_seq_win: u16 = 0;
         let mut win_idx: u16 = 0;
-        let mut window = Window::new(
+        let mut window = WindowRead::new(
             self.opt_common.window_size,
             self.opt_common.block_size,
             file,
         );
+        let n = Instant::now();
         let mut more = window.fill()?;
+        let mut read_time = Instant::now() - n;
 
         let mut timeout_end = Instant::now() + self.opt_common.timeout;
         let mut retry_cnt = 0;
@@ -194,6 +196,9 @@ impl<T: Socket + ?Sized> Worker<T> {
                         thread::sleep(self.opt_common.window_wait);
                     }
                 } else {
+                    let n = Instant::now();
+                    window.prefill()?;
+                    read_time += Instant::now() - n;
                     self.socket.set_nonblocking(false)?;
                     timeout_end = Instant::now() + self.opt_common.timeout;
                 }
@@ -235,9 +240,12 @@ impl<T: Socket + ?Sized> Worker<T> {
                                             block_seq_win = ack;
                                             window.remove(diff)?;
                                             if !more && window.is_empty() {
+                                                log_dbg!("  IO read time \x1B[1;37m{:?}\x1B[0m", read_time);
                                                 return Ok(());
                                             }
+                                            let n = Instant::now();
                                             more = more && window.fill()?;
+                                            read_time += Instant::now() - n;
                                             win_idx = 0;
                                             break;
                                         } else {
@@ -291,12 +299,12 @@ impl<T: Socket + ?Sized> Worker<T> {
 
     fn receive_file(mut self, file: File) -> Result<u64, Box<dyn Error>> {
         let mut block_number: u16 = 0;
-        let mut window = Window::new(
+        let mut window = WindowWrite::new(
             self.opt_common.window_size,
-            self.opt_common.block_size,
             file,
         );
         let mut retry_cnt = 0;
+        let mut write_time = Duration::default();
 
         let mut last = false;
         let mut listen_all = false;
@@ -392,10 +400,15 @@ impl<T: Socket + ?Sized> Worker<T> {
                 }
             }
 
-            window.empty()?;
             self.send_packet(&Packet::Ack(block_number))?;
             send_ack = false;
+
+            let n = Instant::now();
+            window.empty()?;
+            write_time = Instant::now() - n;
         }
+
+        log_dbg!("  IO write time \x1B[1;37m{:?}\x1B[0m", write_time);
 
         // we should wait and listen a bit more as per RFC 1350 section 6
 
